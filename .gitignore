@@ -1,0 +1,34 @@
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Large Model Weights (> 100MB GitHub limit)
+*.pt
+*.pth
+*.weights
+*.onnx
+
+# Cache & Local Dumps
+encodings_cache.pkl
+*.pkl
+
+# Daily Attendance Output Logs (Keep folder via .gitkeep)
+attendance/*.xlsx
+attendance/*.csv
+!attendance/.gitkeep
+
+# IDE & OS Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
