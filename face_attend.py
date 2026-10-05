@@ -58,6 +58,12 @@ parser.add_argument(
     default="rtsp://192.168.1.18:554/stream1",
     help="Camera source: RTSP URL (default: rtsp://192.168.1.18:554/stream1) or webcam index (0, 1, ...)"
 )
+parser.add_argument(
+    "--tolerance",
+    type=float,
+    default=0.58,
+    help="Face matching distance threshold (default: 0.58, lower is stricter, higher is more lenient)"
+)
 args = parser.parse_args()
 
 def open_working_camera(preferred_idx=None):
@@ -159,47 +165,73 @@ while True:
 
     # Only process every N-th frame to save CPU
     if frame_count % process_every_n_frames == 0:
-        # Resize frame to 1/4 size for 16x faster face recognition processing
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        h, w = frame.shape[:2]
+        # For 720p/576p feeds, scale by 0.5 (half) instead of 0.25 so faces are clear and detectable
+        if w > 1280:
+            scale_factor = 0.25
+            inv_scale = 4
+        else:
+            scale_factor = 0.5
+            inv_scale = 2
+
+        small_frame = cv2.resize(frame, (0, 0), fx=scale_factor, fy=scale_factor)
         rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
         # Detect face locations & encodings on the smaller frame
         face_locations = face_recognition.face_locations(rgb_small_frame)
+        if len(face_locations) == 0:
+            # Fallback: upsample once to catch smaller or distant faces
+            face_locations = face_recognition.face_locations(rgb_small_frame, number_of_times_to_upsample=1)
+
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
         face_names = []
+        face_details = []
         for face_encoding in face_encodings:
-            matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
             name = "Unknown"
+            best_dist = 1.0
+            closest_name = "None"
 
             if len(known_face_encodings) > 0:
                 face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-                best_match_index = face_distances.argmin()
-                # 0.55 distance threshold for high accuracy
-                if matches[best_match_index] and face_distances[best_match_index] < 0.55:
-                    name = known_face_names[best_match_index]
+                best_match_index = int(np.argmin(face_distances))
+                best_dist = float(face_distances[best_match_index])
+                closest_name = known_face_names[best_match_index]
+
+                if best_dist <= args.tolerance:
+                    name = closest_name
                     # Automate attendance recording in Excel
-                    attendance_mgr.mark_attendance(name)
+                    res = attendance_mgr.mark_attendance(name)
+                    status = res.get("status", "")
+                    if status in ["MARKED_IN", "MARKED_OUT"]:
+                        print(f"[{time.strftime('%H:%M:%S')}] ATTENDANCE MARKED: {name} (dist: {best_dist:.3f}) -> {res.get('message')}")
+                    elif status in ["ALREADY_PRESENT", "COOLDOWN"]:
+                        print(f"[{time.strftime('%H:%M:%S')}] RECOGNIZED: {name} (dist: {best_dist:.3f}) - {res.get('message')}")
+                else:
+                    print(f"[{time.strftime('%H:%M:%S')}] UNMATCHED FACE: Closest is '{closest_name}' (distance: {best_dist:.3f} > threshold {args.tolerance})")
 
             face_names.append(name)
+            face_details.append((name, best_dist))
 
     # Display results on the full-sized original frame
-    for (top, right, bottom, left), name in zip(face_locations, face_names):
-        # Scale back up face locations since we detected them on 1/4 size frame
-        top *= 4
-        right *= 4
-        bottom *= 4
-        left *= 4
+    for (top, right, bottom, left), (name, dist) in zip(face_locations, face_details if 'face_details' in locals() else [(n, 0.0) for n in face_names]):
+        # Scale back up face locations
+        top *= inv_scale
+        right *= inv_scale
+        bottom *= inv_scale
+        left *= inv_scale
 
-        box_color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+        is_match = (name != "Unknown")
+        box_color = (0, 255, 0) if is_match else (0, 0, 255)
 
         # Draw box around face
         cv2.rectangle(frame, (left, top), (right, bottom), box_color, 2)
 
-        # Draw label box below face
+        # Draw label box below face with name and match distance
+        label = f"{name} ({dist:.2f})" if is_match else f"Unknown ({dist:.2f})"
         cv2.rectangle(frame, (left, bottom - 30), (right, bottom), box_color, cv2.FILLED)
-        cv2.putText(frame, name, (left + 6, bottom - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, label, (left + 6, bottom - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
     # Draw live attendance confirmation banner on frame
     frame = attendance_mgr.draw_banner_overlay(frame)

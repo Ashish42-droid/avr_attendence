@@ -196,14 +196,17 @@ class AttendanceManager:
 
         # Case 2: Cooldown - Scanned too soon after last punch
         if time_since_last_scan < self.cooldown_seconds:
-            return {
+            res = {
                 "status": "COOLDOWN",
                 "name": clean_name,
                 "in_time": rec["in_time"].strftime("%H:%M:%S"),
                 "out_time": rec["out_time"].strftime("%H:%M:%S") if rec["out_time"] else "-",
-                "message": f"Already marked today ({rec['in_time'].strftime('%H:%M:%S')})",
+                "message": f"{clean_name}: Already marked today ({rec['in_time'].strftime('%H:%M:%S')})",
                 "color": (0, 200, 255) # Yellow/Amber
             }
+            if not self.active_banner:
+                self._set_banner(res)
+            return res
 
         # Case 3: OUT-TIME Punch
         # Only record Out-Time if minimum threshold has passed since In-Time
@@ -212,13 +215,16 @@ class AttendanceManager:
         else:
             # Within early arrival window, update last scan time without changing out-time
             rec["last_scan"] = now
-            return {
+            res = {
                 "status": "ALREADY_PRESENT",
                 "name": clean_name,
                 "in_time": rec["in_time"].strftime("%H:%M:%S"),
-                "message": f"Already logged In at {rec['in_time'].strftime('%H:%M:%S')}",
+                "message": f"{clean_name}: Already logged In at {rec['in_time'].strftime('%H:%M:%S')}",
                 "color": (0, 220, 220)
             }
+            if not self.active_banner:
+                self._set_banner(res)
+            return res
 
     def _record_in_time(self, name: str, now: datetime, date_str: str, time_str: str) -> Dict[str, Any]:
         """Records initial In-Time punch to Excel and memory."""
