@@ -80,9 +80,14 @@ python build_cache.py
 
 ### Step 3: Launch Attendance
 
-#### Option A: Standalone Mode (Local Webcam / Single PC)
+#### Option A: Standalone Mode (RTSP IP Camera or Local Webcam)
 ```bash
+# Connects automatically to RTSP IP Camera (rtsp://192.168.1.18:554/stream1)
 python face_attend.py
+
+# Or explicitly pass RTSP stream / webcam index:
+python face_attend.py --source "rtsp://192.168.1.18:554/stream1"
+python face_attend.py --source 0
 ```
 *Press `q` in the video window to exit.*
 
@@ -94,11 +99,11 @@ python server_gpu.py
 
 **Terminal 2 (Client Camera):**
 ```bash
-# Using local webcam
-python client_camera.py --source 0 --server http://localhost:8000
+# Streams RTSP IP Camera to GPU Server (default source: rtsp://192.168.1.18:554/stream1)
+python client_camera.py --server http://localhost:8000
 
-# Using RTSP / IP Camera
-python client_camera.py --source "rtsp://192.168.1.18:554/stream1" --server http://localhost:8000
+# Or using local webcam
+python client_camera.py --source 0 --server http://localhost:8000
 ```
 
 ---

@@ -49,20 +49,30 @@ else:
 
 print(f"Finished loading {len(known_face_names)} known faces.")
 
-import numpy as np
+import argparse
 
-def open_working_camera():
+parser = argparse.ArgumentParser(description="AVR Face Recognition Attendance System")
+parser.add_argument(
+    "--source",
+    type=str,
+    default="rtsp://192.168.1.18:554/stream1",
+    help="Camera source: RTSP URL (default: rtsp://192.168.1.18:554/stream1) or webcam index (0, 1, ...)"
+)
+args = parser.parse_args()
+
+def open_working_camera(preferred_idx=None):
     """
     Scans camera devices and automatically selects the first one delivering
     a real, non-black video feed (avoids Windows dummy/IR camera black screens).
     """
     print("[*] Probing for active camera...")
-    # Prioritize index 1 (physical webcam), then 0, then 2
-    for idx in [1, 0, 2]:
+    sources = [preferred_idx, 1, 0, 2] if preferred_idx is not None else [1, 0, 2]
+    seen = set()
+    unique_sources = [x for x in sources if not (x in seen or seen.add(x))]
+    for idx in unique_sources:
         for backend_name, backend in [("DirectShow", cv2.CAP_DSHOW), ("Default", cv2.CAP_ANY)]:
             cap = cv2.VideoCapture(idx, backend)
             if cap.isOpened():
-                # Warm up and check if camera actually delivers non-black frames
                 working = False
                 for _ in range(5):
                     ret, frame = cap.read()
@@ -75,15 +85,46 @@ def open_working_camera():
                 cap.release()
     return None
 
-video_capture = open_working_camera()
-if video_capture is None:
-    print("[ERROR] Could not find any active webcam delivering video.")
-    print("[*] Tip: Check if another application (Zoom, Teams, Browser) has the camera locked.")
+def open_camera_source(source_str):
+    """
+    Connects to the specified video source:
+    - RTSP URL (e.g. rtsp://192.168.1.18:554/stream1) using TCP & minimal buffer
+    - Local webcam (index 0, 1, etc.) with hardware probing
+    """
+    if isinstance(source_str, str) and source_str.startswith("rtsp://"):
+        print(f"[*] Connecting to RTSP Camera: {source_str}...")
+        # Force TCP transport for RTSP to prevent packet drop / pixelation on Wi-Fi/LAN
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+        cap = cv2.VideoCapture(source_str, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if cap.isOpened():
+            for _ in range(5):
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    h, w = frame.shape[:2]
+                    print(f"[+] RTSP Camera connected successfully! Resolution: {w}x{h}")
+                    return cap
+                time.sleep(0.1)
+            print("[!] RTSP stream opened but failed to retrieve valid frames.")
+            cap.release()
+        else:
+            print(f"[!] Could not connect to RTSP URL: {source_str}")
+        print("[*] Probing local webcam as fallback...")
+        return open_working_camera()
+    else:
+        cam_idx = int(source_str) if str(source_str).isdigit() else 0
+        return open_working_camera(preferred_idx=cam_idx)
+
+video_capture = open_camera_source(args.source)
+if video_capture is None or not video_capture.isOpened():
+    print("[ERROR] Could not open camera source.")
+    print("[*] Tip: Check network connectivity for RTSP or ensure webcam is plugged in.")
     exit(1)
 
-print("Webcam started successfully! Press 'q' on your keyboard to exit.")
+print("[+] Camera started successfully! Press 'q' on your keyboard to exit.\n")
 
 frame_count = 0
+consecutive_drops = 0
 face_locations = []
 face_names = []
 process_every_n_frames = 2  # Process every 2nd frame for maximum FPS
@@ -93,8 +134,21 @@ fps = 0
 while True:
     ret, frame = video_capture.read()
     if not ret:
-        print("Failed to grab frame.")
-        break
+        consecutive_drops += 1
+        time.sleep(0.05)
+        if consecutive_drops % 10 == 0:
+            print(f"[!] Dropped frame from camera ({consecutive_drops} drops). Retrying...")
+        if consecutive_drops >= 30:
+            print("[!] Stream connection interrupted. Reconnecting...")
+            video_capture.release()
+            time.sleep(1)
+            video_capture = open_camera_source(args.source)
+            consecutive_drops = 0
+            if video_capture is None or not video_capture.isOpened():
+                print("[ERROR] Failed to reconnect to camera stream. Exiting.")
+                break
+        continue
+    consecutive_drops = 0
 
     frame_count += 1
 

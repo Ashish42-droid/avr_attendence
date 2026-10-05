@@ -6,7 +6,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description="Live Camera Face Recognition Client (DGX GPU Accelerated)")
-    parser.add_argument("--source", type=str, default="0", help="Camera source (0 for local webcam, or RTSP URL e.g. rtsp://192.168.1.18:554/stream1)")
+    parser.add_argument("--source", type=str, default="rtsp://192.168.1.18:554/stream1", help="Camera source (0 for local webcam, or RTSP URL e.g. rtsp://192.168.1.18:554/stream1)")
     parser.add_argument("--server", type=str, default="http://localhost:8000", help="DGX Server URL (default: http://localhost:8000)")
     args = parser.parse_args()
 
@@ -34,7 +34,10 @@ def main():
 
     print(f"\nOpening Video Source: {source}...")
     if isinstance(source, str) and source.startswith("rtsp://"):
+        import os
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     else:
         import numpy as np
         sources_to_try = [1, 0, 2] if source == 0 else [source, 1, 0, 2]
@@ -76,13 +79,26 @@ def main():
     banner_msg = None
     banner_color = (0, 255, 0)
     banner_expiry = 0
+    consecutive_drops = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("[!] Failed to grab frame from camera.")
-            time.sleep(0.1)
+            consecutive_drops += 1
+            time.sleep(0.05)
+            if consecutive_drops % 10 == 0:
+                print(f"[!] Frame drop from camera ({consecutive_drops} drops). Retrying...")
+            if consecutive_drops >= 30 and isinstance(source, str) and source.startswith("rtsp://"):
+                print("[!] Stream interrupted. Attempting RTSP reconnection...")
+                cap.release()
+                time.sleep(1)
+                cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                consecutive_drops = 0
+                if not cap.isOpened():
+                    print("[ERROR] Failed to reconnect to RTSP stream.")
             continue
+        consecutive_drops = 0
 
         frame_count += 1
 

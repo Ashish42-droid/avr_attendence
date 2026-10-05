@@ -62,7 +62,9 @@ else:
 
 RTSP_URL = os.environ.get("RTSP_URL", "rtsp://192.168.1.18:554/stream1")
 print(f"\nConnecting to video source: {RTSP_URL}")
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 video_capture = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
+video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 if not video_capture.isOpened():
     print(f"Warning: Could not connect to {RTSP_URL}. Testing with local images/mode.")
@@ -106,10 +108,10 @@ try:
                     # Automate attendance recording in Excel
                     attendance_mgr.mark_attendance(name)
 
-        # Headless display check
-        if "DISPLAY" in os.environ:
+        # Display check (Windows or systems with DISPLAY set)
+        if "DISPLAY" in os.environ or os.name == "nt":
             frame = attendance_mgr.draw_banner_overlay(frame)
-            cv2.imshow("Attendance", frame)
+            cv2.imshow("AVR Attendance (RTSP)", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
